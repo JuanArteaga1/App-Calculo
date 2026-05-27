@@ -1,23 +1,24 @@
 import { useParams, Link } from 'react-router-dom';
-import { getTemaById, getUnidadById } from '../data/temas';
+import { getTemaById } from '../data/temas';
 import GraphZone from '../components/GraphZone';
 import ErrorBoundary from '../components/ErrorBoundary';
+import TemaVideo from '../components/TemaVideo';
+import SaberesRelacionados from '../components/SaberesRelacionados';
+import AnimatedIcon from '../components/AnimatedIcon';
 
 export default function TemaPage() {
   const { unidadId, temaId } = useParams();
   const tema = getTemaById(unidadId, temaId);
-  const unidad = getUnidadById(unidadId);
 
   if (!tema) {
     return (
       <div className="container" style={{ padding: '80px 0', textAlign: 'center' }}>
         <h2>Tema no encontrado</h2>
-        <Link to="/calculo1">Volver a Cálculo I</Link>
+        <Link to="/calculo1">Volver a Calculo I</Link>
       </div>
     );
   }
 
-  // Determinar modo y subtipo de graficacion segun tema
   function getGraphMode(uid, tid) {
     if (uid === 'limites') return { modo: 'limite', subtipo: '' };
     if (uid === 'derivadas') return { modo: 'derivada', subtipo: '' };
@@ -42,7 +43,6 @@ export default function TemaPage() {
 
   const { modo, subtipo } = getGraphMode(unidadId, temaId);
 
-  // Convertir contenido markdown-like a JSX simple
   const renderContent = (text) => {
     const lines = text.trim().split('\n');
     const elements = [];
@@ -80,16 +80,14 @@ export default function TemaPage() {
         inList = true;
         listItems.push(trimmed.slice(2));
       } else if (trimmed.startsWith('[') && trimmed.includes(']=')) {
-        // Ecuación simple centrada
         flushList();
         elements.push(
           <div key={idx} style={styles.equation}>
-            <code style={styles.equationCode}>{trimmed.replace(/[\[\]]/g, '')}</code>
+            <code style={styles.equationCode}>{trimmed.replace(/\[|\]/g, '')}</code>
           </div>
         );
       } else {
         flushList();
-        // Negritas con **
         const parts = trimmed.split(/(\*\*.*?\*\*)/g);
         const children = parts.map((part, pIdx) => {
           if (part.startsWith('**') && part.endsWith('**')) {
@@ -108,23 +106,24 @@ export default function TemaPage() {
   return (
     <div style={styles.page}>
       <div className="container">
-        {/* Breadcrumb */}
         <div style={styles.breadcrumb}>
-          <Link to="/calculo1" style={styles.breadcrumbLink}>Cálculo I</Link>
+          <Link to="/calculo1" style={styles.breadcrumbLink}>Calculo I</Link>
           <span style={styles.breadcrumbSep}>/</span>
           <Link to={`/calculo1/${unidadId}`} style={styles.breadcrumbLink}>
-            {unidadId === 'limites' ? 'Límites' : unidadId === 'derivadas' ? 'Derivadas' : 'Aplicaciones'}
+            {unidadId === 'limites' ? 'Limites' : unidadId === 'derivadas' ? 'Derivadas' : 'Aplicaciones'}
           </Link>
           <span style={styles.breadcrumbSep}>/</span>
           <span style={styles.breadcrumbCurrent}>{tema.titulo}</span>
         </div>
 
         <div className="tema-layout" style={styles.layout}>
-          {/* Contenido principal */}
           <div style={styles.main}>
-            <div style={styles.card}>
+            <div id="seccion-contenido" style={styles.card}>
               <div style={styles.cardHeader}>
-                <span style={styles.cardTag}>Lección {tema.id}</span>
+                <div style={styles.cardHeaderTop}>
+                  <AnimatedIcon type={unidadId} size={48} />
+                  <span style={styles.cardTag}>Leccion {tema.id}</span>
+                </div>
                 <h1 style={styles.cardTitle}>{tema.titulo}</h1>
                 <p style={styles.cardDesc}>{tema.descripcion}</p>
               </div>
@@ -133,8 +132,11 @@ export default function TemaPage() {
               </div>
             </div>
 
-            {/* Zona gráfica dentro del flujo principal */}
-            <div style={styles.graphWrap}>
+            <div id="seccion-videos">
+              <TemaVideo unidadId={unidadId} temaId={temaId} />
+            </div>
+
+            <div id="seccion-laboratorio" style={styles.graphWrap}>
               <ErrorBoundary>
                 <GraphZone
                   modo={modo}
@@ -143,40 +145,43 @@ export default function TemaPage() {
                 />
               </ErrorBoundary>
             </div>
-
           </div>
 
-          {/* Sidebar */}
           <aside className="tema-sidebar" style={styles.sidebar}>
             <div style={styles.sidebarCard}>
-              <h4 style={styles.sidebarTitle}>Tu progreso</h4>
-              <div style={styles.progressBar}>
-                <div style={{ ...styles.progressFill, width: '0%' }} />
-              </div>
-              <p style={styles.progressText}>Comienza la lección para registrar tu avance.</p>
-            </div>
-
-            <div style={styles.sidebarCard}>
               <h4 style={styles.sidebarTitle}>Recursos</h4>
-              <ul style={styles.sidebarList}>
-                <li style={styles.sidebarItem}>📄 Teoría completa</li>
-                <li style={styles.sidebarItem}>📝 Ejercicios de práctica</li>
-                <li style={styles.sidebarItem}>🎥 Video explicativo</li>
-                <li style={styles.sidebarItem}>🔬 Laboratorio interactivo</li>
-              </ul>
+              <nav style={styles.navList}>
+                <NavLink href="#seccion-contenido" icon="📘" label="Contenido del tema" />
+                <NavLink href="#seccion-videos" icon="🎥" label="Videos de apoyo" />
+                <NavLink href="#seccion-laboratorio" icon="📊" label="Laboratorio" />
+                <NavLink href="#seccion-saberes" icon="💡" label="Saberes previos" />
+              </nav>
             </div>
 
-            <div style={styles.sidebarCard}>
-              <h4 style={styles.sidebarTitle}>Consejo del día</h4>
-              <p style={styles.tip}>
-                "No busques la perfección en el primer intento. El cálculo se entiende practicando, 
-                no memorizando."
-              </p>
+            <div id="seccion-saberes">
+              <SaberesRelacionados unidadId={unidadId} />
             </div>
           </aside>
         </div>
       </div>
     </div>
+  );
+}
+
+function NavLink({ href, icon, label }) {
+  const handleClick = (e) => {
+    e.preventDefault();
+    const el = document.querySelector(href);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  return (
+    <a href={href} onClick={handleClick} style={styles.navLink}>
+      <span style={styles.navIcon}>{icon}</span>
+      <span style={styles.navLabel}>{label}</span>
+    </a>
   );
 }
 
@@ -225,6 +230,12 @@ const styles = {
     padding: '28px 32px',
     borderBottom: '1px solid #E2E8F0',
     background: '#F8FAFC',
+  },
+  cardHeaderTop: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    marginBottom: '10px',
   },
   cardTag: {
     display: 'inline-flex',
@@ -331,49 +342,33 @@ const styles = {
     letterSpacing: '0.5px',
     fontFamily: "'Poppins', sans-serif",
   },
-  progressBar: {
-    height: '8px',
-    background: '#E2E8F0',
-    borderRadius: '999px',
-    overflow: 'hidden',
-    marginBottom: '10px',
-  },
-  progressFill: {
-    height: '100%',
-    background: '#0047CC',
-    borderRadius: '999px',
-    transition: 'width 0.3s ease',
-  },
-  progressText: {
-    fontSize: '13px',
-    color: '#64748B',
-    margin: 0,
-  },
-  sidebarList: {
-    listStyle: 'none',
-    padding: 0,
-    margin: 0,
+  navList: {
     display: 'flex',
     flexDirection: 'column',
+    gap: '8px',
+  },
+  navLink: {
+    display: 'flex',
+    alignItems: 'center',
     gap: '10px',
-  },
-  sidebarItem: {
-    fontSize: '14px',
+    padding: '10px 12px',
+    borderRadius: '10px',
+    textDecoration: 'none',
     color: '#334155',
-    padding: '8px 10px',
+    fontSize: '14px',
+    fontWeight: 600,
     background: '#F8FAFC',
-    borderRadius: '8px',
+    transition: 'all 0.2s ease',
+    cursor: 'pointer',
+    border: '1px solid transparent',
   },
-  tip: {
+  navIcon: {
+    fontSize: '16px',
+    lineHeight: 1,
+  },
+  navLabel: {
     fontSize: '14px',
-    color: '#334155',
-    fontStyle: 'italic',
-    lineHeight: 1.55,
-    margin: 0,
-    padding: '10px',
-    background: '#FEF3C7',
-    borderRadius: '8px',
-    borderLeft: '3px solid #F4B400',
+    fontWeight: 600,
   },
 };
 
@@ -383,6 +378,17 @@ if (typeof document !== 'undefined') {
     @media (max-width: 1024px) {
       .tema-layout { grid-template-columns: 1fr !important; }
       .tema-sidebar { position: static !important; }
+    }
+    .tema-sidebar a:hover {
+      background: rgba(0,71,204,0.06) !important;
+      border-color: #BFDBFE !important;
+      color: #0047CC !important;
+    }
+    #seccion-contenido,
+    #seccion-videos,
+    #seccion-laboratorio,
+    #seccion-saberes {
+      scroll-margin-top: 96px;
     }
   `;
   document.head.appendChild(style);

@@ -51,6 +51,11 @@ export const youtubeThumb = (id) =>
 
 export const youtubeEmbed = (id) =>
   id ? `https://www.youtube.com/embed/${id}?rel=0&modestbranding=1` : '';
+export function getVideoByTema(unidadId, temaId) {
+  return videosBase.find(
+    (v) => v.unidad === unidadId && v.tema === temaId
+  ) || null;
+}
 
 
 

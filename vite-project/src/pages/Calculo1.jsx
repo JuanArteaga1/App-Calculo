@@ -1,6 +1,8 @@
 import { Link, useParams } from 'react-router-dom';
 import { unidades } from '../data/temas';
 import ChatSection from '../components/ChatSection';
+import HeroAnimation from '../components/HeroAnimation';
+import AnimatedIcon from '../components/AnimatedIcon';
 
 export default function Calculo1() {
   const { unidadId } = useParams();
@@ -28,9 +30,7 @@ export default function Calculo1() {
           </div>
 
           <div style={styles.unidadHeader}>
-            <div style={{ ...styles.unidadIcon, background: unidad.color + '15', color: unidad.color }}>
-              {unidad.icono}
-            </div>
+            <AnimatedIcon type={unidad.id} size={64} />
             <div>
               <h1 style={styles.unidadTitle}>{unidad.titulo}</h1>
               <p style={styles.unidadDesc}>{unidad.descripcion}</p>
@@ -72,7 +72,7 @@ export default function Calculo1() {
             <h1 style={styles.heroTitle}>Cálculo I</h1>
             <p style={styles.heroDesc}>
               Un viaje completo desde los fundamentos de los límites hasta las aplicaciones prácticas 
-              de las derivadas. Aprende a tu ritmo con contenido interactivo y visualizaciones dinámicas.
+              de las derivadas. Aprende con el curso y refuerza a tu ritmo con contenido interactivo y visualizaciones dinámicas.
             </p>
             <div style={styles.heroStats}>
               <div style={styles.stat}>
@@ -90,11 +90,7 @@ export default function Calculo1() {
             </div>
           </div>
           <div style={styles.heroRight}>
-            <img
-              src="/Estudiantes(1).jpeg"
-              alt="Estudiantes"
-              style={styles.heroImage}
-            />
+            <HeroAnimation />
           </div>
         </div>
       </section>
@@ -112,9 +108,7 @@ export default function Calculo1() {
           <div className="calculo-units-grid" style={styles.unitsGrid}>
             {unidades.map((u) => (
               <Link key={u.id} to={`/calculo1/${u.id}`} style={styles.unitCard}>
-                <div style={{ ...styles.unitIconWrap, background: u.color + '12', color: u.color }}>
-                  <span style={styles.unitIcon}>{u.icono}</span>
-                </div>
+                <AnimatedIcon type={u.id} size={52} />
                 <h3 style={styles.unitTitle}>{u.titulo}</h3>
                 <p style={styles.unitDesc}>{u.descripcion}</p>
                 <div style={styles.unitFooter}>
@@ -358,6 +352,7 @@ const styles = {
     transition: 'transform 0.2s ease, box-shadow 0.2s ease',
     display: 'flex',
     flexDirection: 'column',
+    gap: '14px',
   },
   unitIconWrap: {
     width: '52px',
@@ -376,14 +371,14 @@ const styles = {
     fontSize: '18px',
     fontWeight: 700,
     color: '#1E293B',
-    margin: '0 0 8px',
+    margin: 0,
     fontFamily: "'Poppins', sans-serif",
   },
   unitDesc: {
     fontSize: '14px',
     color: '#64748B',
     lineHeight: 1.55,
-    margin: '0 0 20px',
+    margin: '0 0 6px',
     flex: 1,
   },
   unitFooter: {

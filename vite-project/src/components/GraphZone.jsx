@@ -3,24 +3,24 @@ import { evaluate, derivative } from 'mathjs';
 import { resolverConIA } from '../services/openaiService';
 import renderMathInElement from 'katex/dist/contrib/auto-render';
 import 'katex/dist/katex.min.css';
+import TablaAproximacion from './graficos/TablaAproximacion';
 
-export default function GraphZone({ modo = 'limite', subtipo = '', title = 'Laboratorio de Graficación' }) {
-  const getDefaults = () => {
-    if (modo === 'limite') return { fn: 'x^2', a: '2', x0: '2', h: '0.5' };
-    if (modo === 'derivada') return { fn: 'x^2', a: '2', x0: '2', h: '0.5' };
-    return { fn: 'x^2', a: '2', x0: '2', h: '0.5' };
-  };
-  const defaults = getDefaults();
+export default function GraphZone({ modo = 'limite', subtipo = '', title = 'Laboratorio de Graficacion' }) {
+  const defaults = modo === 'limite'
+    ? { fn: '(x^2 - 4)/(x - 2)', a: '2', x0: '2', h: '0.5' }
+    : { fn: 'x^2', a: '2', x0: '2', h: '0.5' };
 
   const [fn, setFn] = useState(defaults.fn);
   const [a, setA] = useState(defaults.a);
   const [x0, setX0] = useState(defaults.x0);
   const [h, setH] = useState(defaults.h);
   const [resultado, setResultado] = useState(null);
+  const [tablaData, setTablaData] = useState([]);
+  const [vista, setVista] = useState('grafica');
+  const [zoom, setZoom] = useState(1);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Estados para la resolución con IA
   const [iaAbierta, setIaAbierta] = useState(false);
   const [iaLoading, setIaLoading] = useState(false);
   const [iaRespuesta, setIaRespuesta] = useState('');
@@ -29,7 +29,6 @@ export default function GraphZone({ modo = 'limite', subtipo = '', title = 'Labo
   const svgRef = useRef(null);
   const mathRef = useRef(null);
 
-  // Renderizar LaTeX de la respuesta de IA con KaTeX
   useEffect(() => {
     if (mathRef.current && iaRespuesta) {
       renderMathInElement(mathRef.current, {
@@ -43,73 +42,301 @@ export default function GraphZone({ modo = 'limite', subtipo = '', title = 'Labo
         errorColor: '#DC2626',
       });
     }
-  }, [iaRespuesta, iaAbierta]);
+  }, [iaRespuesta]);
 
   const safeEvaluate = useCallback((expr, vars) => {
-    try { return evaluate(expr, vars); } catch { return null; }
+    try {
+      const value = evaluate(expr, vars);
+      return typeof value === 'number' ? value : Number(value);
+    } catch {
+      return null;
+    }
   }, []);
 
   const safeDerivative = useCallback((expr) => {
     try { return derivative(expr, 'x').toString(); } catch { return null; }
   }, []);
 
-  const handleGraficar = useCallback(() => {
+  const getFocusPoint = useCallback(() => {
+    if (modo === 'limite') return Number.parseFloat(a) || 0;
+    if (modo === 'derivada') return Number.parseFloat(x0) || 0;
+    return 0;
+  }, [a, x0, modo]);
+
+  const drawEmptyGraph = useCallback(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+
+    const width = svg.clientWidth || 680;
+    const height = svg.clientHeight || 360;
+    const padding = 44;
+    const ns = 'http://www.w3.org/2000/svg';
+    const create = (tag, attrs = {}) => {
+      const el = document.createElementNS(ns, tag);
+      for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, value);
+      return el;
+    };
+
+    svg.innerHTML = '';
+    svg.setAttribute('width', width);
+    svg.setAttribute('height', height);
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+    for (let i = 0; i <= 8; i++) {
+      const x = padding + ((width - padding * 2) * i) / 8;
+      svg.appendChild(create('line', { x1: x, y1: padding, x2: x, y2: height - padding, stroke: '#E2E8F0', 'stroke-width': '1' }));
+    }
+    for (let i = 0; i <= 6; i++) {
+      const y = padding + ((height - padding * 2) * i) / 6;
+      svg.appendChild(create('line', { x1: padding, y1: y, x2: width - padding, y2: y, stroke: '#E2E8F0', 'stroke-width': '1' }));
+    }
+
+    const text = create('text', {
+      x: width / 2,
+      y: height / 2,
+      'text-anchor': 'middle',
+      fill: '#64748B',
+      'font-size': '14',
+      'font-family': 'Inter, system-ui, sans-serif',
+      'font-weight': '700',
+    });
+    text.textContent = 'Ingresa la ecuacion y presiona Resolver para cargar la grafica';
+    svg.appendChild(text);
+  }, []);
+
+  useEffect(() => {
+    drawEmptyGraph();
+  }, [drawEmptyGraph]);
+
+  const drawGraph = useCallback((expr, currentZoom) => {
+    const svg = svgRef.current;
+    if (!svg) return;
+
+    const width = svg.clientWidth || 680;
+    const height = svg.clientHeight || 360;
+    const padding = 46;
+    const innerWidth = width - padding * 2;
+    const innerHeight = height - padding * 2;
+    const focus = getFocusPoint();
+    const range = Math.max(0.35, 4 / currentZoom);
+    const xMin = focus - range;
+    const xMax = focus + range;
+    const samples = 700;
+    const points = [];
+    let yMin = Infinity;
+    let yMax = -Infinity;
+
+    for (let i = 0; i <= samples; i++) {
+      const x = xMin + ((xMax - xMin) * i) / samples;
+      const y = safeEvaluate(expr, { x });
+      if (y !== null && Number.isFinite(y)) {
+        points.push({ x, y });
+        yMin = Math.min(yMin, y);
+        yMax = Math.max(yMax, y);
+      }
+    }
+
+    if (!points.length) {
+      setError('No se pudo evaluar la funcion en el rango seleccionado.');
+      drawEmptyGraph();
+      return;
+    }
+
+    const yPad = (yMax - yMin) * 0.16 || 1;
+    yMin -= yPad;
+    yMax += yPad;
+
+    const scaleX = (x) => padding + ((x - xMin) / (xMax - xMin)) * innerWidth;
+    const scaleY = (y) => height - padding - ((y - yMin) / (yMax - yMin)) * innerHeight;
+
+    const ns = 'http://www.w3.org/2000/svg';
+    const create = (tag, attrs = {}) => {
+      const el = document.createElementNS(ns, tag);
+      for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, value);
+      return el;
+    };
+
+    svg.innerHTML = '';
+    svg.setAttribute('width', width);
+    svg.setAttribute('height', height);
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+    for (let i = 0; i <= 8; i++) {
+      const xVal = xMin + ((xMax - xMin) * i) / 8;
+      const sx = scaleX(xVal);
+      svg.appendChild(create('line', { x1: sx, y1: padding, x2: sx, y2: height - padding, stroke: '#E2E8F0', 'stroke-width': '0.8' }));
+      const label = create('text', { x: sx, y: height - padding + 18, 'text-anchor': 'middle', fill: '#64748B', 'font-size': '10' });
+      label.textContent = xVal.toFixed(currentZoom > 2 ? 2 : 1);
+      svg.appendChild(label);
+    }
+
+    for (let i = 0; i <= 6; i++) {
+      const yVal = yMin + ((yMax - yMin) * i) / 6;
+      const sy = scaleY(yVal);
+      svg.appendChild(create('line', { x1: padding, y1: sy, x2: width - padding, y2: sy, stroke: '#E2E8F0', 'stroke-width': '0.8' }));
+      const label = create('text', { x: padding - 8, y: sy + 4, 'text-anchor': 'end', fill: '#64748B', 'font-size': '10' });
+      label.textContent = yVal.toFixed(currentZoom > 2 ? 2 : 1);
+      svg.appendChild(label);
+    }
+
+    const yAxis = scaleY(0);
+    if (yAxis >= padding && yAxis <= height - padding) {
+      svg.appendChild(create('line', { x1: padding, y1: yAxis, x2: width - padding, y2: yAxis, stroke: '#94A3B8', 'stroke-width': '1.2' }));
+    }
+
+    const xAxis = scaleX(0);
+    if (xAxis >= padding && xAxis <= width - padding) {
+      svg.appendChild(create('line', { x1: xAxis, y1: padding, x2: xAxis, y2: height - padding, stroke: '#94A3B8', 'stroke-width': '1.2' }));
+    }
+
+    let path = '';
+    points.forEach((point, index) => {
+      const sx = scaleX(point.x);
+      const sy = scaleY(point.y);
+      path += index === 0 ? `M ${sx} ${sy}` : ` L ${sx} ${sy}`;
+    });
+    svg.appendChild(create('path', { d: path, fill: 'none', stroke: '#0047CC', 'stroke-width': '2.6' }));
+
+    if (modo === 'limite') {
+      const aNum = Number.parseFloat(a);
+      const sx = scaleX(aNum);
+      svg.appendChild(create('line', { x1: sx, y1: padding, x2: sx, y2: height - padding, stroke: '#F4B400', 'stroke-width': '2', 'stroke-dasharray': '7,5' }));
+
+      const offsets = [0.35 / currentZoom, 0.18 / currentZoom, 0.08 / currentZoom];
+      offsets.forEach((offset, index) => {
+        const leftY = safeEvaluate(expr, { x: aNum - offset });
+        const rightY = safeEvaluate(expr, { x: aNum + offset });
+        if (leftY !== null && Number.isFinite(leftY)) {
+          svg.appendChild(create('circle', { cx: scaleX(aNum - offset), cy: scaleY(leftY), r: String(5 - index), fill: '#10B981', stroke: '#fff', 'stroke-width': '1.5' }));
+        }
+        if (rightY !== null && Number.isFinite(rightY)) {
+          svg.appendChild(create('circle', { cx: scaleX(aNum + offset), cy: scaleY(rightY), r: String(5 - index), fill: '#EF4444', stroke: '#fff', 'stroke-width': '1.5' }));
+        }
+      });
+    }
+
+    if (modo === 'derivada') {
+      const x0Num = Number.parseFloat(x0);
+      const fx0 = safeEvaluate(expr, { x: x0Num });
+      const dStr = safeDerivative(expr);
+      const m = dStr ? safeEvaluate(dStr, { x: x0Num }) : null;
+
+      if (fx0 !== null && Number.isFinite(fx0)) {
+        svg.appendChild(create('circle', { cx: scaleX(x0Num), cy: scaleY(fx0), r: '5', fill: '#EF4444', stroke: '#fff', 'stroke-width': '2' }));
+      }
+
+      if (fx0 !== null && m !== null && Number.isFinite(fx0) && Number.isFinite(m)) {
+        const b = fx0 - m * x0Num;
+        svg.appendChild(create('line', {
+          x1: scaleX(xMin),
+          y1: scaleY(m * xMin + b),
+          x2: scaleX(xMax),
+          y2: scaleY(m * xMax + b),
+          stroke: '#EF4444',
+          'stroke-width': '2',
+          'stroke-dasharray': '7,5',
+        }));
+      }
+    }
+  }, [a, x0, modo, safeEvaluate, safeDerivative, getFocusPoint, drawEmptyGraph]);
+
+  const calcular = useCallback(() => {
     setError('');
-    setResultado(null);
     setLoading(true);
     setIaAbierta(false);
     setIaRespuesta('');
     setIaError('');
 
     try {
-      const aNum = parseFloat(a);
-      const x0Num = parseFloat(x0);
-      const hNum = parseFloat(h);
-
-      if (!fn.trim()) { setError('Ingresa una función f(x).'); setLoading(false); return; }
-
-      const testVal = safeEvaluate(fn, { x: 1 });
-      if (testVal === null || isNaN(testVal)) {
-        setError('No se puede evaluar la función. Usa sintaxis como: x^2, sin(x), e^x, etc.');
-        setLoading(false); return;
+      if (!fn.trim()) {
+        setError('Ingresa una funcion f(x).');
+        drawEmptyGraph();
+        return;
       }
 
-      dibujarSVG(fn, modo, { a: aNum, x0: x0Num, h: hNum });
+      const testValue = safeEvaluate(fn, { x: 1 });
+      if (testValue === null || Number.isNaN(testValue)) {
+        setError('No se puede evaluar la funcion. Usa sintaxis como x^2, sin(x), e^x o (x^2 - 4)/(x - 2).');
+        drawEmptyGraph();
+        return;
+      }
 
-      let res = {};
+      const hValues = [0.5, 0.1, 0.01, 0.001, 0.0001];
+      let nextResult;
+      let nextTable = [];
+
       if (modo === 'limite') {
-        const valA = safeEvaluate(fn, { x: aNum });
-        const valIzq = safeEvaluate(fn, { x: aNum - 0.001 });
-        const valDer = safeEvaluate(fn, { x: aNum + 0.001 });
-        res = {
-          mensaje: `Análisis de límite cuando x → ${aNum}`,
-          fEnA: valA !== null ? valA.toFixed(6) : 'No definido',
-          fEnA_izq: valIzq !== null ? valIzq.toFixed(6) : 'No definido',
-          fEnA_der: valDer !== null ? valDer.toFixed(6) : 'No definido',
+        const aNum = Number.parseFloat(a);
+        const leftNear = safeEvaluate(fn, { x: aNum - 0.00001 });
+        const rightNear = safeEvaluate(fn, { x: aNum + 0.00001 });
+        const atPoint = safeEvaluate(fn, { x: aNum });
+
+        nextTable = hValues.map((step) => ({
+          h: step,
+          izq: safeEvaluate(fn, { x: aNum - step }),
+          der: safeEvaluate(fn, { x: aNum + step }),
+        }));
+
+        nextResult = {
+          tipo: 'limite',
+          titulo: `Limite cuando x tiende a ${aNum}`,
+          detalle: leftNear !== null && rightNear !== null
+            ? `Izquierda ≈ ${leftNear.toFixed(6)} · Derecha ≈ ${rightNear.toFixed(6)}`
+            : 'No se pudo evaluar uno de los lados del limite.',
+          extra: atPoint !== null && Number.isFinite(atPoint) ? `f(${aNum}) = ${atPoint.toFixed(6)}` : `f(${aNum}) no esta definida.`,
         };
       } else if (modo === 'derivada') {
+        const x0Num = Number.parseFloat(x0);
         const dStr = safeDerivative(fn);
         const fx0 = safeEvaluate(fn, { x: x0Num });
         const m = dStr ? safeEvaluate(dStr, { x: x0Num }) : null;
-        res = {
-          derivada: dStr || 'No se pudo calcular',
-          fEnX0: fx0 !== null ? fx0.toFixed(4) : '?',
-          pendienteTangente: m !== null ? m : '?',
-          ecuacionTangente: m !== null && fx0 !== null ? `y = ${m.toFixed(4)}(x - ${x0Num}) + ${fx0.toFixed(4)}` : 'No se pudo calcular',
-          h: hNum,
+
+        nextTable = hValues.map((step) => {
+          const left = safeEvaluate(fn, { x: x0Num - step });
+          const right = safeEvaluate(fn, { x: x0Num + step });
+          return {
+            h: step,
+            izq: left !== null && fx0 !== null ? (fx0 - left) / step : null,
+            der: right !== null && fx0 !== null ? (right - fx0) / step : null,
+          };
+        });
+
+        nextResult = {
+          tipo: 'derivada',
+          titulo: `Derivada en x = ${x0Num}`,
+          detalle: dStr ? `f'(x) = ${dStr}` : 'No se pudo calcular la derivada simbolica.',
+          extra: m !== null && Number.isFinite(m) ? `Pendiente aproximada: ${m.toFixed(6)}` : 'No se pudo evaluar la pendiente.',
         };
       } else {
-        res = { mensaje: 'Gráfica generada. Modifica los parámetros para explorar.' };
+        nextResult = {
+          tipo: 'general',
+          titulo: 'Grafica generada',
+          detalle: subtipo ? `Modo de aplicacion: ${subtipo}` : 'Explora la funcion con el zoom.',
+          extra: '',
+        };
       }
 
-      setResultado(res);
-    } catch (e) {
-      setError('Error inesperado: ' + e.message);
-      console.error(e);
+      setResultado(nextResult);
+      setTablaData(nextTable);
+      setVista('grafica');
+      setZoom(1);
+      drawGraph(fn, 1);
     } finally {
       setLoading(false);
     }
-  }, [fn, a, x0, h, modo, safeEvaluate, safeDerivative]);
+  }, [fn, a, x0, modo, subtipo, safeEvaluate, safeDerivative, drawGraph, drawEmptyGraph]);
+
+  const updateZoom = useCallback((nextZoom) => {
+    const normalizedZoom = Math.min(8, Math.max(0.5, nextZoom));
+    setZoom(normalizedZoom);
+    if (resultado) drawGraph(fn, normalizedZoom);
+  }, [drawGraph, fn, resultado]);
+
+  const handleWheel = useCallback((event) => {
+    if (!resultado || vista !== 'grafica') return;
+    event.preventDefault();
+    updateZoom(zoom + (event.deltaY < 0 ? 0.35 : -0.35));
+  }, [resultado, updateZoom, vista, zoom]);
 
   const handleResolverIA = useCallback(async () => {
     setIaAbierta(true);
@@ -117,17 +344,14 @@ export default function GraphZone({ modo = 'limite', subtipo = '', title = 'Labo
     setIaError('');
     setIaRespuesta('');
 
-    const aNum = parseFloat(a) || 0;
-    const x0Num = parseFloat(x0) || 0;
-
+    const aNum = Number.parseFloat(a) || 0;
+    const x0Num = Number.parseFloat(x0) || 0;
     const res = await resolverConIA(modo, { fn, a: aNum, x0: x0Num, h });
 
     if (!res.ok) {
-      if (res.error === 'NO_API_KEY') {
-        setIaError('Para usar la resolución con IA, debes configurar tu API key de OpenAI. Crea un archivo .env en la raíz del proyecto con: VITE_OPENAI_API_KEY=tu_clave_aqui');
-      } else {
-        setIaError(res.error);
-      }
+      setIaError(res.error === 'NO_API_KEY'
+        ? 'Configura VITE_OPENAI_API_KEY en tu archivo .env para usar la resolucion con IA.'
+        : res.error);
     } else {
       setIaRespuesta(res.respuesta);
     }
@@ -135,164 +359,18 @@ export default function GraphZone({ modo = 'limite', subtipo = '', title = 'Labo
     setIaLoading(false);
   }, [fn, a, x0, h, modo]);
 
-  const dibujarSVG = useCallback((funcion, modoCalc, params) => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    svg.innerHTML = '';
-
-    const width = svg.clientWidth || 600;
-    const height = svg.clientHeight || 320;
-    const padding = 40;
-    const w = width - 2 * padding;
-    const h = height - 2 * padding;
-
-    let xMin, xMax;
-    if (modoCalc === 'limite') { xMin = params.a - 3; xMax = params.a + 3; }
-    else if (modoCalc === 'derivada') { xMin = params.x0 - 3; xMax = params.x0 + 3; }
-    else { xMin = -5; xMax = 5; }
-
-    const puntos = [];
-    let yMin = Infinity, yMax = -Infinity;
-    const nSamples = 200;
-
-    for (let i = 0; i <= nSamples; i++) {
-      const x = xMin + (xMax - xMin) * (i / nSamples);
-      const y = safeEvaluate(funcion, { x });
-      if (y !== null && !isNaN(y) && isFinite(y)) {
-        puntos.push({ x, y });
-        yMin = Math.min(yMin, y); yMax = Math.max(yMax, y);
-      }
-    }
-
-    if (puntos.length === 0) { setError('No se pudo evaluar la función en el rango seleccionado.'); return; }
-
-    const yPad = (yMax - yMin) * 0.1 || 1;
-    yMin -= yPad; yMax += yPad;
-
-    const scaleX = (x) => padding + ((x - xMin) / (xMax - xMin)) * w;
-    const scaleY = (y) => height - padding - ((y - yMin) / (yMax - yMin)) * h;
-
-    let pathD = '';
-    let first = true;
-    for (const p of puntos) {
-      const sx = scaleX(p.x);
-      const sy = scaleY(p.y);
-      pathD += first ? `M ${sx} ${sy}` : ` L ${sx} ${sy}`;
-      first = false;
-    }
-
-    const ns = 'http://www.w3.org/2000/svg';
-    const create = (tag, attrs = {}) => {
-      const el = document.createElementNS(ns, tag);
-      for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
-      return el;
-    };
-
-    svg.setAttribute('width', width);
-    svg.setAttribute('height', height);
-    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-
-    const y0 = scaleY(0);
-    if (y0 >= padding && y0 <= height - padding) {
-      svg.appendChild(create('line', { x1: padding, y1: y0, x2: width - padding, y2: y0, stroke: '#94A3B8', 'stroke-width': '1' }));
-    }
-
-    const x0s = scaleX(0);
-    if (x0s >= padding && x0s <= width - padding) {
-      svg.appendChild(create('line', { x1: x0s, y1: padding, x2: x0s, y2: height - padding, stroke: '#94A3B8', 'stroke-width': '1' }));
-    }
-
-    for (let x = Math.ceil(xMin); x <= Math.floor(xMax); x++) {
-      const sx = scaleX(x);
-      svg.appendChild(create('line', { x1: sx, y1: padding, x2: sx, y2: height - padding, stroke: '#E2E8F0', 'stroke-width': '0.5' }));
-      const text = create('text', { x: sx, y: height - padding + 15, 'text-anchor': 'middle', fill: '#64748B', 'font-size': '10' });
-      text.textContent = x; svg.appendChild(text);
-    }
-
-    for (let y = Math.ceil(yMin); y <= Math.floor(yMax); y++) {
-      const sy = scaleY(y);
-      svg.appendChild(create('line', { x1: padding, y1: sy, x2: width - padding, y2: sy, stroke: '#E2E8F0', 'stroke-width': '0.5' }));
-      const text = create('text', { x: padding - 8, y: sy + 4, 'text-anchor': 'end', fill: '#64748B', 'font-size': '10' });
-      text.textContent = y; svg.appendChild(text);
-    }
-
-    svg.appendChild(create('path', { d: pathD, fill: 'none', stroke: '#0047CC', 'stroke-width': '2.5' }));
-
-    if (modoCalc === 'limite') {
-      const sx = scaleX(params.a);
-      svg.appendChild(create('line', { x1: sx, y1: padding, x2: sx, y2: height - padding, stroke: '#F4B400', 'stroke-width': '2', 'stroke-dasharray': '6,4' }));
-      const fa = safeEvaluate(funcion, { x: params.a });
-      if (fa !== null && isFinite(fa)) {
-        svg.appendChild(create('circle', { cx: sx, cy: scaleY(fa), r: '5', fill: '#F4B400', stroke: '#fff', 'stroke-width': '2' }));
-      }
-    }
-
-    if (modoCalc === 'derivada') {
-      const sx0 = scaleX(params.x0);
-      const fx0 = safeEvaluate(funcion, { x: params.x0 });
-      if (fx0 !== null && isFinite(fx0)) {
-        const sy0 = scaleY(fx0);
-        svg.appendChild(create('circle', { cx: sx0, cy: sy0, r: '5', fill: '#EF4444', stroke: '#fff', 'stroke-width': '2' }));
-        const dStr = safeDerivative(funcion);
-        const m = dStr ? safeEvaluate(dStr, { x: params.x0 }) : null;
-        if (m !== null && isFinite(m)) {
-          const b = fx0 - m * params.x0;
-          const tx1 = xMin, ty1 = m * tx1 + b;
-          const tx2 = xMax, ty2 = m * tx2 + b;
-          svg.appendChild(create('line', {
-            x1: scaleX(tx1), y1: scaleY(ty1), x2: scaleX(tx2), y2: scaleY(ty2),
-            stroke: '#EF4444', 'stroke-width': '2', 'stroke-dasharray': '6,4',
-          }));
-        }
-      }
-    }
-  }, [safeEvaluate, safeDerivative]);
-
-  const inputStyle = {
-    padding: '10px 14px', borderRadius: '10px', border: '1px solid #E2E8F0',
-    fontSize: '14px', fontFamily: "'Inter', sans-serif", outline: 'none',
-    minWidth: '120px', flex: 1,
-  };
-  const labelStyle = {
-    fontSize: '11px', fontWeight: 700, color: '#64748B',
-    textTransform: 'uppercase', letterSpacing: '0.5px',
-  };
-
-  const renderResultadoIA = () => {
+  const renderIa = () => {
     if (!iaAbierta) return null;
 
     return (
       <div style={styles.iaPanel}>
-        <div style={styles.iaHeader}>
-          <span style={styles.iaEmoji}>🤖</span>
-          <div>
-            <div style={styles.iaTitle}>Resolución paso a paso con IA</div>
-            <div style={styles.iaSubtitle}>Modelo: OpenAI o3-mini</div>
-          </div>
-          <button style={styles.iaClose} onClick={() => setIaAbierta(false)} title="Cerrar">✕</button>
-        </div>
-
-        {iaLoading && (
-          <div style={styles.iaLoading}>
-            <div style={styles.spinner} />
-            <p style={styles.iaLoadingText}>La IA está resolviendo el ejercicio paso a paso... Esto puede tomar unos segundos.</p>
-          </div>
-        )}
-
-        {iaError && (
-          <div style={styles.iaError}>
-            <strong>⚠ No se pudo conectar con la IA</strong>
-            <p style={{ margin: '8px 0 0', fontSize: '13px', lineHeight: 1.5 }}>{iaError}</p>
-          </div>
-        )}
-
+        {iaLoading && <p style={styles.iaText}>Resolviendo paso a paso...</p>}
+        {iaError && <p style={styles.iaError}>{iaError}</p>}
         {iaRespuesta && (
-          <div style={styles.iaContent}>
-            <div ref={mathRef} style={styles.iaRespuesta}>
-              {iaRespuesta.split('\n').map((line, i) => (
-                <p key={i} style={styles.iaLine}>{line}</p>
-              ))}
-            </div>
+          <div ref={mathRef} style={styles.iaRespuesta}>
+            {iaRespuesta.split('\n').map((line, index) => (
+              <p key={index} style={styles.iaLine}>{line}</p>
+            ))}
           </div>
         )}
       </div>
@@ -302,98 +380,114 @@ export default function GraphZone({ modo = 'limite', subtipo = '', title = 'Labo
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <div style={styles.headerIcon}>📊</div>
+        <div style={styles.headerIconWrap}>
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M 4 22 Q 10 6 14 14 Q 18 22 24 8" stroke="#0047CC" strokeWidth="2.5" strokeLinecap="round" fill="none" />
+            <circle cx="14" cy="14" r="2" fill="#F4B400" />
+            <line x1="4" y1="14" x2="24" y2="14" stroke="#94A3B8" strokeWidth="1" strokeDasharray="3,3" />
+            <line x1="14" y1="4" x2="14" y2="24" stroke="#94A3B8" strokeWidth="1" strokeDasharray="3,3" />
+          </svg>
+        </div>
         <div>
           <div style={styles.headerTitle}>{title}</div>
-          <div style={styles.headerSubtitle}>Laboratorio interactivo de graficación</div>
+          <div style={styles.headerSubtitle}>Escribe una ecuacion, resuelve y explora la grafica con zoom</div>
         </div>
       </div>
 
-      <div style={styles.inputRow}>
-        <div style={styles.inputGroup}>
-          <label style={labelStyle}>f(x) =</label>
-          <input style={inputStyle} value={fn} onChange={(e) => setFn(e.target.value)} placeholder="x^2" />
+      <div style={styles.formBlock}>
+        <div style={styles.inputGroupWide}>
+          <label style={styles.label}>Ecuacion a resolver: f(x)</label>
+          <input style={styles.input} value={fn} onChange={(e) => setFn(e.target.value)} placeholder="(x^2 - 4)/(x - 2)" />
         </div>
 
-        {modo === 'limite' && (
-          <div style={styles.inputGroup}>
-            <label style={labelStyle}>x →</label>
-            <input style={inputStyle} value={a} onChange={(e) => setA(e.target.value)} placeholder="2" />
-          </div>
-        )}
-
-        {modo === 'derivada' && (
-          <>
+        <div className="graph-params-grid" style={styles.paramsGrid}>
+          {modo === 'limite' && (
             <div style={styles.inputGroup}>
-              <label style={labelStyle}>x₀ =</label>
-              <input style={inputStyle} value={x0} onChange={(e) => setX0(e.target.value)} placeholder="2" />
+              <label style={styles.label}>x tiende a</label>
+              <input style={styles.input} value={a} onChange={(e) => setA(e.target.value)} placeholder="2" />
             </div>
-            <div style={styles.inputGroup}>
-              <label style={labelStyle}>h =</label>
-              <input style={inputStyle} value={h} onChange={(e) => setH(e.target.value)} placeholder="0.5" />
-            </div>
-          </>
-        )}
+          )}
 
-        <button style={styles.btn} onClick={handleGraficar} disabled={loading}>
-          {loading ? 'Graficando...' : '▶ Resolver y Graficar'}
-        </button>
-      </div>
-
-      <div style={styles.plotArea}>
-        <svg ref={svgRef} style={styles.svg} />
-      </div>
-
-      {error && (
-        <div style={styles.errorBox}>
-          <strong>⚠ Error:</strong> {error}
+          {modo === 'derivada' && (
+            <>
+              <div style={styles.inputGroup}>
+                <label style={styles.label}>x0</label>
+                <input style={styles.input} value={x0} onChange={(e) => setX0(e.target.value)} placeholder="2" />
+              </div>
+              <div style={styles.inputGroup}>
+                <label style={styles.label}>h</label>
+                <input style={styles.input} value={h} onChange={(e) => setH(e.target.value)} placeholder="0.5" />
+              </div>
+            </>
+          )}
         </div>
-      )}
+
+        <div style={styles.actions}>
+          <button type="button" style={styles.solveBtn} onClick={calcular} disabled={loading}>
+            {loading ? 'Resolviendo...' : '▶ Resolver'}
+          </button>
+          <button
+            type="button"
+            style={{ ...styles.viewBtn, ...(vista === 'grafica' ? styles.viewBtnActive : {}) }}
+            onClick={() => {
+              setVista('grafica');
+              if (resultado) drawGraph(fn, zoom);
+            }}
+          >
+            Ver grafica
+          </button>
+          <button
+            type="button"
+            style={{ ...styles.viewBtn, ...(vista === 'tabla' ? styles.viewBtnActive : {}) }}
+            onClick={() => setVista('tabla')}
+            disabled={!resultado}
+          >
+            Ver valores de aproximacion
+          </button>
+        </div>
+      </div>
+
+      {error && <div style={styles.errorBox}>{error}</div>}
 
       {resultado && (
-        <div style={styles.results}>
-          {resultado.mensaje && (
-            <div style={styles.resultCard}>
-              <div style={styles.resultLabel}>Resultado</div>
-              <div style={styles.resultValue}>{resultado.mensaje}</div>
-            </div>
-          )}
-          {resultado.derivada && (
-            <div style={styles.resultCard}>
-              <div style={styles.resultLabel}>Derivada</div>
-              <div style={styles.resultValue}>f&apos;(x) = {resultado.derivada}</div>
-            </div>
-          )}
-          {resultado.pendienteTangente !== undefined && (
-            <div style={styles.resultCard}>
-              <div style={styles.resultLabel}>Pendiente Tangente</div>
-              <div style={styles.resultValue}>f&apos;(x₀) = {resultado.pendienteTangente}</div>
-              {resultado.ecuacionTangente && <div style={styles.resultSub}>Ecuación: {resultado.ecuacionTangente}</div>}
-            </div>
-          )}
-          {resultado.fEnA !== undefined && (
-            <div style={styles.resultCard}>
-              <div style={styles.resultLabel}>Evaluación</div>
-              <div style={styles.resultSub}>f({a}) = {resultado.fEnA}</div>
-              <div style={styles.resultSub}>f({a}-0.001) ≈ {resultado.fEnA_izq}</div>
-              <div style={styles.resultSub}>f({a}+0.001) ≈ {resultado.fEnA_der}</div>
-            </div>
-          )}
-
-          {/* Botón de IA */}
-          <div style={styles.iaCta}>
-            <div style={styles.iaCtaText}>
-              <span style={styles.iaCtaEmoji}>🧠</span>
-              ¿Quieres ver la resolución paso a paso del ejercicio?
-            </div>
-            <button style={styles.iaCtaBtn} onClick={handleResolverIA} disabled={iaLoading}>
-              {iaLoading ? 'Consultando IA...' : '🤖 Ver resolución con IA'}
-            </button>
+        <div style={styles.resultSummary}>
+          <div>
+            <div style={styles.resultTitle}>{resultado.titulo}</div>
+            <div style={styles.resultText}>{resultado.detalle}</div>
+            {resultado.extra && <div style={styles.resultText}>{resultado.extra}</div>}
           </div>
+          <button type="button" style={styles.iaButton} onClick={handleResolverIA} disabled={iaLoading}>
+            IA paso a paso
+          </button>
         </div>
       )}
 
-      {renderResultadoIA()}
+      {vista === 'grafica' && (
+        <div style={styles.plotArea}>
+          <div style={styles.zoomBar}>
+            <button type="button" style={styles.zoomBtn} onClick={() => updateZoom(zoom - 0.5)} disabled={!resultado}>-</button>
+            <span style={styles.zoomLabel}>Zoom {zoom.toFixed(1)}x</span>
+            <button type="button" style={styles.zoomBtn} onClick={() => updateZoom(zoom + 0.5)} disabled={!resultado}>+</button>
+            <span style={styles.zoomHint}>Tambien puedes usar la rueda del mouse sobre la grafica.</span>
+          </div>
+          <svg ref={svgRef} style={styles.svg} onWheel={handleWheel} />
+          {resultado && modo === 'limite' && (
+            <div style={styles.legend}>
+              <span><i style={{ ...styles.dot, background: '#10B981' }} /> Aproximacion por izquierda</span>
+              <span><i style={{ ...styles.dot, background: '#EF4444' }} /> Aproximacion por derecha</span>
+              <span><i style={{ ...styles.dot, background: '#F4B400' }} /> Punto objetivo</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {vista === 'tabla' && (
+        <div style={styles.tableWrap}>
+          {resultado ? <TablaAproximacion datos={tablaData} modo={modo} /> : <p style={styles.emptyText}>Primero resuelve una ecuacion.</p>}
+        </div>
+      )}
+
+      {renderIa()}
     </div>
   );
 }
@@ -407,106 +501,252 @@ const styles = {
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
-    gap: '16px',
   },
   header: {
-    display: 'flex', alignItems: 'center', gap: '12px',
-    padding: '16px 20px', borderBottom: '1px solid #E2E8F0', background: '#F8FAFC',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    padding: '18px 20px',
+    borderBottom: '1px solid #E2E8F0',
+    background: '#F8FAFC',
   },
-  headerIcon: { fontSize: '22px' },
-  headerTitle: { fontWeight: 700, fontSize: '15px', color: '#1E293B', fontFamily: "'Poppins', sans-serif" },
-  headerSubtitle: { fontSize: '12px', color: '#64748B' },
-  inputRow: {
-    display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: '12px', padding: '0 20px',
+  headerIconWrap: {
+    width: '42px',
+    height: '42px',
+    borderRadius: '10px',
+    background: 'rgba(0,71,204,0.08)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
   },
-  inputGroup: { display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '100px', flex: 1 },
-  btn: {
-    padding: '10px 20px', borderRadius: '10px', border: 'none', background: '#0047CC', color: '#fff',
-    fontSize: '14px', fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 12px rgba(0,71,204,0.25)',
-    transition: 'all 0.2s ease', whiteSpace: 'nowrap',
+  headerTitle: {
+    fontWeight: 800,
+    fontSize: '15px',
+    color: '#1E293B',
+    fontFamily: "'Poppins', sans-serif",
+  },
+  headerSubtitle: {
+    fontSize: '12px',
+    color: '#64748B',
+  },
+  formBlock: {
+    padding: '18px 20px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+  },
+  paramsGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: '12px',
+  },
+  inputGroupWide: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  inputGroup: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  label: {
+    fontSize: '11px',
+    fontWeight: 800,
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+  },
+  input: {
+    width: '100%',
+    padding: '12px 14px',
+    borderRadius: '12px',
+    border: '1px solid #D8E1EE',
+    fontSize: '15px',
+    fontFamily: "'Inter', sans-serif",
+    outline: 'none',
+    background: '#fff',
+  },
+  actions: {
+    display: 'flex',
+    gap: '10px',
+    flexWrap: 'wrap',
+  },
+  solveBtn: {
+    padding: '11px 22px',
+    borderRadius: '12px',
+    border: 'none',
+    background: '#0047CC',
+    color: '#fff',
+    fontSize: '14px',
+    fontWeight: 800,
+    cursor: 'pointer',
+    boxShadow: '0 4px 12px rgba(0,71,204,0.24)',
+  },
+  viewBtn: {
+    padding: '11px 16px',
+    borderRadius: '12px',
+    border: '1px solid #D8E1EE',
+    background: '#fff',
+    color: '#334155',
+    fontSize: '13px',
+    fontWeight: 800,
+    cursor: 'pointer',
+  },
+  viewBtnActive: {
+    borderColor: '#0047CC',
+    color: '#0047CC',
+    background: 'rgba(0,71,204,0.06)',
+  },
+  errorBox: {
+    margin: '0 20px 16px',
+    padding: '12px 14px',
+    background: '#FEF2F2',
+    border: '1px solid #FECACA',
+    borderRadius: '12px',
+    color: '#B91C1C',
+    fontSize: '14px',
+    fontWeight: 600,
+  },
+  resultSummary: {
+    margin: '0 20px 16px',
+    padding: '14px 16px',
+    borderRadius: '14px',
+    border: '1px solid #BFDBFE',
+    background: '#EFF6FF',
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: '12px',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+  },
+  resultTitle: {
+    color: '#1E293B',
+    fontWeight: 800,
+    fontSize: '14px',
+    fontFamily: "'Poppins', sans-serif",
+  },
+  resultText: {
+    color: '#1E40AF',
+    fontSize: '13px',
+    marginTop: '4px',
+  },
+  iaButton: {
+    padding: '9px 14px',
+    borderRadius: '10px',
+    border: '1px solid #0A1628',
+    background: '#0A1628',
+    color: '#fff',
+    fontSize: '12px',
+    fontWeight: 800,
+    cursor: 'pointer',
   },
   plotArea: {
-    minHeight: '320px', background: '#F8FAFC', margin: '0 20px', borderRadius: '12px',
-    border: '1px dashed #CBD5E1', display: 'flex', alignItems: 'center', justifyContent: 'center',
-    position: 'relative', overflow: 'hidden',
-  },
-  svg: { width: '100%', height: '320px', display: 'block' },
-  results: { padding: '0 20px 20px', display: 'flex', flexDirection: 'column', gap: '10px' },
-  resultCard: { background: '#F8FAFC', borderRadius: '12px', padding: '14px 16px', border: '1px solid #E2E8F0' },
-  resultLabel: {
-    fontSize: '11px', fontWeight: 700, color: '#64748B',
-    textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '6px',
-  },
-  resultValue: { fontSize: '15px', fontWeight: 700, color: '#1E293B', fontFamily: "'Poppins', sans-serif" },
-  resultSub: { fontSize: '13px', color: '#64748B', marginTop: '4px' },
-  errorBox: {
-    padding: '12px 16px', background: '#FEF2F2', border: '1px solid #FECACA',
-    borderRadius: '10px', color: '#DC2626', fontSize: '14px', margin: '0 20px',
-  },
-
-  // IA CTA
-  iaCta: {
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    gap: '12px', flexWrap: 'wrap',
-    padding: '14px 16px', background: '#EFF6FF', borderRadius: '12px',
-    border: '1px solid #BFDBFE',
-  },
-  iaCtaText: {
-    fontSize: '14px', color: '#1E40AF', fontWeight: 600,
-    display: 'flex', alignItems: 'center', gap: '8px',
-  },
-  iaCtaEmoji: { fontSize: '18px' },
-  iaCtaBtn: {
-    padding: '10px 18px', borderRadius: '10px', border: 'none',
-    background: '#0A1628', color: '#fff', fontSize: '13px', fontWeight: 700,
-    cursor: 'pointer', whiteSpace: 'nowrap',
-    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-  },
-
-  // IA Panel
-  iaPanel: {
     margin: '0 20px 20px',
-    background: '#fff', borderRadius: '16px',
-    border: '1px solid #E2E8F0',
-    boxShadow: '0 10px 25px rgba(0,0,0,0.08)',
+    background: '#F8FAFC',
+    borderRadius: '14px',
+    border: '1px dashed #CBD5E1',
     overflow: 'hidden',
   },
-  iaHeader: {
-    display: 'flex', alignItems: 'center', gap: '10px',
-    padding: '14px 16px', background: '#0A1628', color: '#fff',
+  zoomBar: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '10px 12px',
+    background: '#fff',
+    borderBottom: '1px solid #E2E8F0',
+    flexWrap: 'wrap',
   },
-  iaEmoji: { fontSize: '20px' },
-  iaTitle: { fontWeight: 700, fontSize: '14px', fontFamily: "'Poppins', sans-serif" },
-  iaSubtitle: { fontSize: '11px', opacity: 0.75 },
-  iaClose: {
-    marginLeft: 'auto', background: 'rgba(255,255,255,0.1)', border: 'none',
-    color: '#fff', width: '28px', height: '28px', borderRadius: '6px',
-    cursor: 'pointer', fontSize: '14px',
+  zoomBtn: {
+    width: '30px',
+    height: '30px',
+    borderRadius: '8px',
+    border: '1px solid #D8E1EE',
+    background: '#fff',
+    color: '#1E293B',
+    fontSize: '16px',
+    fontWeight: 800,
+    cursor: 'pointer',
   },
-  iaLoading: {
-    padding: '32px 24px', textAlign: 'center', display: 'flex',
-    flexDirection: 'column', alignItems: 'center', gap: '12px',
+  zoomLabel: {
+    fontSize: '12px',
+    color: '#334155',
+    fontWeight: 800,
   },
-  spinner: {
-    width: '32px', height: '32px', borderRadius: '50%',
-    border: '3px solid #E2E8F0', borderTopColor: '#0047CC',
-    animation: 'spin 1s linear infinite',
+  zoomHint: {
+    fontSize: '12px',
+    color: '#64748B',
   },
-  iaLoadingText: { fontSize: '14px', color: '#64748B', margin: 0, maxWidth: '280px' },
+  svg: {
+    width: '100%',
+    height: '360px',
+    display: 'block',
+    background: '#F8FAFC',
+  },
+  legend: {
+    display: 'flex',
+    gap: '14px',
+    flexWrap: 'wrap',
+    padding: '10px 12px',
+    background: '#fff',
+    borderTop: '1px solid #E2E8F0',
+    color: '#64748B',
+    fontSize: '12px',
+    fontWeight: 700,
+  },
+  dot: {
+    display: 'inline-block',
+    width: '9px',
+    height: '9px',
+    borderRadius: '50%',
+    marginRight: '6px',
+  },
+  tableWrap: {
+    margin: '0 20px 20px',
+  },
+  emptyText: {
+    margin: 0,
+    padding: '18px',
+    color: '#64748B',
+    background: '#F8FAFC',
+    borderRadius: '12px',
+    border: '1px dashed #CBD5E1',
+  },
+  iaPanel: {
+    margin: '0 20px 20px',
+    borderRadius: '14px',
+    border: '1px solid #E2E8F0',
+    background: '#fff',
+    padding: '16px',
+  },
+  iaText: {
+    margin: 0,
+    color: '#64748B',
+    fontSize: '14px',
+  },
   iaError: {
-    padding: '16px', background: '#FEF2F2', color: '#991B1B', fontSize: '14px',
+    margin: 0,
+    color: '#B91C1C',
+    fontSize: '14px',
+    fontWeight: 600,
   },
-  iaContent: { padding: '16px', maxHeight: '500px', overflowY: 'auto' },
-  iaRespuesta: { fontSize: '14px', lineHeight: 1.7, color: '#334155' },
-  iaLine: { margin: '0 0 8px' },
-  iaMath: {
-    fontFamily: "'Courier New', monospace", fontWeight: 700,
-    color: '#0047CC', background: '#EFF6FF', padding: '1px 4px', borderRadius: '4px',
+  iaRespuesta: {
+    fontSize: '14px',
+    lineHeight: 1.7,
+    color: '#334155',
+  },
+  iaLine: {
+    margin: '0 0 8px',
   },
 };
 
 if (typeof document !== 'undefined') {
   const style = document.createElement('style');
-  style.textContent = `@keyframes spin { to { transform: rotate(360deg); } }`;
+  style.textContent = `
+    @media (max-width: 768px) {
+      .graph-params-grid { grid-template-columns: 1fr !important; }
+    }
+  `;
   document.head.appendChild(style);
 }
